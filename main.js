@@ -52,31 +52,49 @@ function RoundToHundredths(x) {
   return Math.floor(x * 100 + 0.5) / 100;
 }
 
-function HandleNode(svgNode, scaleX, scaleY, translateX, translateY) {
+function PathColorArgbFromString(string) {
+  if (string.length == 4) {
+    string = `#${string[1]}${string[1]}${string[2]}${string[2]}${string[3]}${string[3]}`;
+  }
+  return `PATH_COLOR_ARGB, 0xFF, 0x${string.substr(1, 2)}, 0x${string.substr(3, 2)}, 0x${string.substr(5, 2)},\n`;
+}
+
+function HandleNode(svgNode, transform) {
   var output = '';
   for (var idx = 0; idx < svgNode.children.length; ++idx) {
     var svgElement = svgNode.children[idx];
+    var fillAttr = svgElement.getAttribute("fill");
+    var strokeAttr = svgElement.getAttribute("stroke");
+    if (fillAttr && fillAttr.match(/[0-9a-f]{3}|[0-9a-f]{6}/i)) {
+      output += 'NEW_PATH,\n';
+      output += PathColorArgbFromString(fillAttr);
+    } else if (strokeAttr && strokeAttr.match(/\#[0-9a-f]{6}/i)) {
+      output += 'NEW_PATH,\n';
+      output += "STROKE, 1,\n";
+      output += PathColorArgbFromString(strokeAttr);
+    }
     switch (svgElement.tagName) {
       // g ---------------------------------------------------------------------
       case 'g':
         if (svgElement.getAttribute('transform')) {
-          output += "<g> with a transform not handled\n";
+          output += HandleNode(svgElement, transform.multiply(svgElement.transform.baseVal[0].matrix));
           break;
         }
 
-        return HandleNode(svgElement, scaleX, scaleY, translateX, translateY);
+        output += HandleNode(svgElement, transform);
+        break;
 
       // PATH ------------------------------------------------------------------
       case 'path':
         // If fill is none, this is probably one of those worthless paths
         // of the form <path fill="none" d="M0 0h24v24H0z"/>
-        if (svgElement.getAttribute('fill') == 'none')
+        var style = window.getComputedStyle(svgElement);
+        if (style.fill == 'none' && style.stroke == 'none') {
           break;
+        }
 
         var commands = [];
         var path = svgElement.getAttribute('d').replace(/,/g, ' ').trim();
-        if (path.slice(-1).toLowerCase() !== 'z')
-          path += 'z';
         while (path) {
           var point = parseFloat(path);
           if (isNaN(point)) {
@@ -114,15 +132,18 @@ function HandleNode(svgNode, scaleX, scaleY, translateX, translateY) {
             // argument. Only the last two arguments (out of 7) in an arc
             // command are coordinates.
             var transformArg = true;
+            var xAxis;
             if (currentCommand.command.toLowerCase() == 'a') {
               if (currentCommand.args.length < 5)
                 transformArg = false;
+              xAxis = currentCommand.args.length % 2 == 1;
+            } else {
+              xAxis = currentCommand.command.toLowerCase() != 'v' && (currentCommand.args.length % 2 == 0);
             }
-            var xAxis = currentCommand.command.toLowerCase() != 'v' && (currentCommand.args.length % 2 == 0);
             if (transformArg) {
-              point *= xAxis ? scaleX : scaleY;
+              point *= xAxis ? transform.a : transform.d;
               if (currentCommand.command != currentCommand.command.toLowerCase())
-                point += xAxis ? translateX : translateY;
+                point += xAxis ? transform.e : transform.f;
             }
             point = RoundToHundredths(point);
             currentCommand.args.push(point);
@@ -135,11 +156,9 @@ function HandleNode(svgNode, scaleX, scaleY, translateX, translateY) {
                 continue;
               if (path[i] == '.' && ++dotsSeen == 1)
                 continue;
-
-              path = path.substr(i);
               break;
             }
-
+            path = path.substr(i);
           }
 
           path = path.trim();
@@ -162,11 +181,11 @@ function HandleNode(svgNode, scaleX, scaleY, translateX, translateY) {
       // CIRCLE ----------------------------------------------------------------
       case 'circle':
         var cx = parseFloat(svgElement.getAttribute('cx'));
-        cx *= scaleX;
-        cx += translateX;
+        cx *= transform.a;
+        cx += transform.e;
         var cy = parseFloat(svgElement.getAttribute('cy'));
-        cy *= scaleY;
-        cy += translateY;
+        cy *= transform.d;
+        cy += transform.f;
         var rad = parseFloat(svgElement.getAttribute('r'));
         output += 'CIRCLE, ' + cx + ', ' + cy + ', ' + rad + ',\n';
         break;
@@ -174,11 +193,11 @@ function HandleNode(svgNode, scaleX, scaleY, translateX, translateY) {
       // RECT ------------------------------------------------------------------
       case 'rect':
         var x = parseFloat(svgElement.getAttribute('x')) || 0;
-        x *= scaleX;
-        x += translateX;
+        x *= transform.a;
+        x += transform.e;
         var y = parseFloat(svgElement.getAttribute('y')) || 0;
-        y *= scaleY;
-        y += translateY;
+        y *= transform.d;
+        y += transform.f;
         var width = parseFloat(svgElement.getAttribute('width'));
         var height = parseFloat(svgElement.getAttribute('height'));
 
@@ -216,7 +235,11 @@ function ConvertInput() {
   if (canvasSize != 48)
     output += 'CANVAS_DIMENSIONS, ' + canvasSize + ',\n';
 
-  output += HandleNode(svgNode, scaleX, scaleY, translateX, translateY);
+  var transform = new DOMMatrix([1, 0, 0, 1, 0, 0]);
+  transform.translateSelf(translateX, translateY);
+  transform.scaleSelf(scaleX, scaleY);
+
+  output += HandleNode(svgNode, transform);
   // Truncate final comma and newline.
   $('output-span').textContent = output.slice(0, -2);
 }
