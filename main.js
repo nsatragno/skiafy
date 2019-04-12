@@ -1,3 +1,5 @@
+"use strict";
+
 function $(id) {
   return document.getElementById(id);
 }
@@ -57,6 +59,17 @@ function PathColorArgbFromString(string) {
     string = `#${string[1]}${string[1]}${string[2]}${string[2]}${string[3]}${string[3]}`;
   }
   return `PATH_COLOR_ARGB, 0xFF, 0x${string.substr(1, 2)}, 0x${string.substr(3, 2)}, 0x${string.substr(5, 2)},\n`;
+}
+
+function SeparateStrokeAndFillShapes(svgNode) {
+  var strokeAndFillElements = svgNode.querySelectorAll("[fill][stroke]");
+  for (var i = 0; i < strokeAndFillElements.length; ++i) {
+    var original = strokeAndFillElements[i];
+    var copy = strokeAndFillElements[i].cloneNode();
+    copy.removeAttribute("stroke");
+    original.removeAttribute("fill");
+    original.parentElement.insertBefore(copy, original);
+  }
 }
 
 function HandleNode(svgNode, transform) {
@@ -164,7 +177,7 @@ function HandleNode(svgNode, transform) {
           path = path.trim();
         }
 
-        for (command_idx in commands) {
+        for (var command_idx in commands) {
           var command = commands[command_idx];
           output += ToCommand(command.command) + ', ';
           for (i in command.args) {
@@ -234,6 +247,8 @@ function ConvertInput() {
     canvasSize = svgNode.width.baseVal.value;
   if (canvasSize != 48)
     output += 'CANVAS_DIMENSIONS, ' + canvasSize + ',\n';
+
+  SeparateStrokeAndFillShapes(svgNode);
 
   var transform = new DOMMatrix([1, 0, 0, 1, 0, 0]);
   transform.translateSelf(translateX, translateY);
